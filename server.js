@@ -1,4 +1,4 @@
-// server.js - AgendaAI Pro - Final Production Version
+// server.js - AgendaAI Pro - Final Production Version with Clerk Authentication
 require('dotenv').config();
 const express = require('express');
 const OpenAI = require('openai');
@@ -9,11 +9,14 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
+// CLERK CHANGE: 1. Import the necessary Clerk middleware for Express.
+const { ClerkExpressRequireAuth } = require('@clerk/clerk-sdk-node');
 
 app.use(express.json());
 
 
 // --- HTML CONTENT ---
+// CLERK CHANGE: 2. Modified the header and added styles for Sign-In/Sign-Up links.
 const indexHtml = `
 <!DOCTYPE html>
 <html lang="en">
@@ -45,6 +48,9 @@ const indexHtml = `
         .site-nav { display: flex; justify-content: space-between; align-items: center; max-width: 1000px; margin: 0 auto; }
         .logo { display: flex; align-items: center; gap: 12px; font-size: 1.25rem; font-weight: 700; color: var(--text-light); text-decoration: none; }
         .logo i { color: var(--primary); }
+        .auth-links { display: flex; align-items: center; gap: 1.5rem; }
+        .nav-link { font-size: 0.9rem; font-weight: 600; color: var(--text-muted); text-decoration: none; transition: color 0.2s; }
+        .nav-link:hover { color: var(--text-light); }
         .header-cta { padding: 0.5rem 1rem; font-size: 0.9rem; font-weight: 600; color: var(--primary); border: 1px solid var(--primary); border-radius: var(--radius); text-decoration: none; transition: all 0.2s; }
         .header-cta:hover { background-color: hsla(var(--primary-hue), 90%, 65%, 0.1); }
         .page-wrapper { max-width: 1000px; margin: 0 auto; padding: 4rem 2rem; }
@@ -106,7 +112,18 @@ const indexHtml = `
     <header class="site-header">
         <nav class="site-nav">
             <a href="#" class="logo"> <i class="fa-solid fa-calendar-check"></i> AgendaAI Pro </a>
-            <a href="#pricing" class="header-cta">Get Started</a>
+            <!--
+                CLERK CHANGE: 3. These links allow users to sign in and sign up.
+                IMPORTANT: You MUST replace '#' with the real URLs from your Clerk Dashboard.
+                Go to your Clerk Dashboard -> your application -> Paths.
+                - Copy the 'Sign-in URL' for the 'Sign In' link.
+                - Copy the 'Sign-up URL' for the 'Get Started' link.
+            -->
+            <div class="auth-links">
+                <a href="#pricing" class="nav-link">Pricing</a>
+                <a href="#" class="nav-link">Sign In</a>
+                <a href="#" class="header-cta">Get Started</a>
+            </div>
         </nav>
     </header>
     <div class="page-wrapper">
@@ -123,7 +140,7 @@ const indexHtml = `
                 </div>
                 <div class="demo-window">
                     <div class="demo-panel">
-                        <h4>YOUR RAW NOTES</h4>
+                        <h4>YOUR RAW NOTES (sign in to use)</h4>
                         <div id="demo-notes-container" contenteditable="true"></div>
                         <button id="demo-generate-btn">Generate Agenda</button>
                     </div>
@@ -305,16 +322,21 @@ const indexHtml = `
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ notes: userNotes })
                 });
-
+                
+                // CLERK CHANGE: The response might be a redirect to the sign-in page, which fetch handles transparently.
+                // If the user wasn't signed in, the browser will be redirected and this code below won't even run.
+                // If it does run, we check if the response is OK (2xx status).
                 if (!response.ok) {
-                    throw new Error('Failed to get a response from the server.');
+                    const errorData = await response.json().catch(() => ({'error': 'An authentication error occurred. Please sign in and try again.'}));
+                    throw new Error(errorData.error || 'Failed to get a response from the server.');
                 }
+
                 const realAgenda = await response.json();
                 await displayGeneratedAgenda(realAgenda);
 
             } catch (error) {
                 console.error("Error generating agenda:", error);
-                alert("Sorry, an error occurred while generating the agenda. Please try again.");
+                alert("Sorry, an error occurred while generating the agenda. Please make sure you are signed in and try again.");
             } finally {
                 isGenerating = false;
                 generateBtn.disabled = false;
@@ -393,8 +415,15 @@ app.get('/config', (req, res) => {
     res.json({ publishableKey: process.env.STRIPE_PUBLISHABLE_KEY });
 });
 
-// A route to handle real AI agenda generation
-app.post('/generate-agenda', async (req, res) => {
+// CLERK CHANGE: 4. The AI generation route is now PROTECTED.
+// The `ClerkExpressRequireAuth()` middleware is added. It will automatically
+// handle redirects for unauthenticated users.
+app.post('/generate-agenda', ClerkExpressRequireAuth(), async (req, res) => {
+    // If the code reaches this point, the user is guaranteed to be signed in.
+    // We can get their user ID from the request object.
+    const userId = req.auth.userId;
+    console.log(`Request received from authenticated user: ${userId}`);
+
     const { notes } = req.body;
     if (!notes) {
         return res.status(400).json({ error: 'Notes are required.' });
@@ -423,7 +452,6 @@ app.post('/create-checkout-session', async (req, res) => {
             payment_method_types: ['card'],
             line_items: [{ price_data: { currency: 'usd', product_data: { name: 'AgendaAI Pro - Lifetime Access' }, unit_amount: 1900, }, quantity: 1, }],
             mode: 'payment',
-            // THIS IS THE FINAL, CRITICAL CHANGE
             success_url: `https://agenda-ai-app.onrender.com/success.html`,
             cancel_url: `https://agenda-ai-app.onrender.com/cancel.html`,
         });
