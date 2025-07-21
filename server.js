@@ -9,14 +9,14 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
-// CLERK CHANGE: 1. Import the necessary Clerk middleware for Express.
+// CLERK: Import the necessary Clerk middleware for Express.
 const { ClerkExpressRequireAuth } = require('@clerk/clerk-sdk-node');
 
 app.use(express.json());
 
 
 // --- HTML CONTENT ---
-// CLERK CHANGE: 2. Modified the header and added styles for Sign-In/Sign-Up links.
+// CLERK: The Sign-In/Sign-Up links now have your real Clerk URLs.
 const indexHtml = `
 <!DOCTYPE html>
 <html lang="en">
@@ -112,17 +112,10 @@ const indexHtml = `
     <header class="site-header">
         <nav class="site-nav">
             <a href="#" class="logo"> <i class="fa-solid fa-calendar-check"></i> AgendaAI Pro </a>
-            <!--
-                CLERK CHANGE: 3. These links allow users to sign in and sign up.
-                IMPORTANT: You MUST replace '#' with the real URLs from your Clerk Dashboard.
-                Go to your Clerk Dashboard -> your application -> Paths.
-                - Copy the 'Sign-in URL' for the 'Sign In' link.
-                - Copy the 'Sign-up URL' for the 'Get Started' link.
-            -->
             <div class="auth-links">
                 <a href="#pricing" class="nav-link">Pricing</a>
-                <a href="#" class="nav-link">Sign In</a>
-                <a href="#" class="header-cta">Get Started</a>
+                <a href="https://fluent-glowworm-94.accounts.dev/sign-in" class="nav-link">Sign In</a>
+                <a href="https://fluent-glowworm-94.accounts.dev/sign-up" class="header-cta">Get Started</a>
             </div>
         </nav>
     </header>
@@ -323,9 +316,6 @@ const indexHtml = `
                     body: JSON.stringify({ notes: userNotes })
                 });
                 
-                // CLERK CHANGE: The response might be a redirect to the sign-in page, which fetch handles transparently.
-                // If the user wasn't signed in, the browser will be redirected and this code below won't even run.
-                // If it does run, we check if the response is OK (2xx status).
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({'error': 'An authentication error occurred. Please sign in and try again.'}));
                     throw new Error(errorData.error || 'Failed to get a response from the server.');
@@ -415,12 +405,8 @@ app.get('/config', (req, res) => {
     res.json({ publishableKey: process.env.STRIPE_PUBLISHABLE_KEY });
 });
 
-// CLERK CHANGE: 4. The AI generation route is now PROTECTED.
-// The `ClerkExpressRequireAuth()` middleware is added. It will automatically
-// handle redirects for unauthenticated users.
+// CLERK: The AI generation route is now PROTECTED by the middleware.
 app.post('/generate-agenda', ClerkExpressRequireAuth(), async (req, res) => {
-    // If the code reaches this point, the user is guaranteed to be signed in.
-    // We can get their user ID from the request object.
     const userId = req.auth.userId;
     console.log(`Request received from authenticated user: ${userId}`);
 
