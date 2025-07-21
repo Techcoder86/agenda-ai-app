@@ -1,13 +1,19 @@
-// server.js - AgendaAI Pro - Final, Working & Corrected Version
+// server.js - AgendaAI Pro - Final Production Version
 require('dotenv').config();
 const express = require('express');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const OpenAI = require('openai');
 
+// --- INITIALIZE LIBRARIES ---
 const app = express();
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
+
 app.use(express.json());
 
+
 // --- HTML CONTENT ---
-// This string is now clean and contains no server-side variables.
 const indexHtml = `
 <!DOCTYPE html>
 <html lang="en">
@@ -59,8 +65,9 @@ const indexHtml = `
         .demo-panel { flex: 1; display: flex; flex-direction: column; }
         .demo-panel h4 { font-size: 0.9rem; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 1rem; text-align: left;}
         #demo-notes-container { flex: 1; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem; font-family: monospace; font-size: 0.9rem; white-space: pre-wrap; color: #c9d1d9; overflow-wrap: break-word; }
-        #demo-generate-btn { width: 100%; padding: 0.5rem; margin-top: 1rem; font-weight: 600; border-radius: 6px; color: var(--text-light); border: 1px solid var(--border-color); background: #21262d; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        #demo-generate-btn.loading { background: var(--primary); color: #0d1117; border-color: var(--primary); }
+        #demo-generate-btn { width: 100%; padding: 0.5rem; margin-top: 1rem; font-weight: 600; border-radius: 6px; color: var(--text-light); border: 1px solid var(--border-color); background: #21262d; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        #demo-generate-btn:hover:not(:disabled) { background-color: #30363d; }
+        #demo-generate-btn:disabled { background: var(--primary); color: #0d1117; border-color: var(--primary); cursor: not-allowed; }
         #demo-agenda-container { flex: 1; opacity: 0; transition: opacity 0.5s ease-in; }
         #demo-agenda-container.visible { opacity: 1; }
         .demo-agenda-item { opacity: 0; transform: translateY(15px); padding: 0.75rem; background: var(--bg-dark); border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 0.75rem; font-size: 0.9rem; text-align: left; transition: opacity 0.4s ease-out, transform 0.4s ease-out; position: relative; }
@@ -98,10 +105,7 @@ const indexHtml = `
 <body>
     <header class="site-header">
         <nav class="site-nav">
-            <a href="#" class="logo">
-                <i class="fa-solid fa-calendar-check"></i>
-                AgendaAI Pro
-            </a>
+            <a href="#" class="logo"> <i class="fa-solid fa-calendar-check"></i> AgendaAI Pro </a>
             <a href="#pricing" class="header-cta">Get Started</a>
         </nav>
     </header>
@@ -120,7 +124,7 @@ const indexHtml = `
                 <div class="demo-window">
                     <div class="demo-panel">
                         <h4>YOUR RAW NOTES</h4>
-                        <div id="demo-notes-container"></div>
+                        <div id="demo-notes-container" contenteditable="true"></div>
                         <button id="demo-generate-btn">Generate Agenda</button>
                     </div>
                     <div class="demo-panel">
@@ -177,37 +181,154 @@ const indexHtml = `
         </main>
     </div>
     <script>
-    // This script is now clean, standard browser JavaScript.
-    // It will fetch its configuration from the server first.
     document.addEventListener('DOMContentLoaded', async function() {
-        // --- DATA & ELEMENT SELECTIONS (Unchanged) ---
-        const demoData = [{"notes":"ok so for the odyssey kickoff we NEED to talk about the budget, it's tight. maybe shift from paid social ads to more content marketing? jenna is handling the new hires, need to sync with her on their start dates. also the launch for the apollo project in q3 was a disaster, we have to do a full post-mortem on what went wrong before we even think about a new launch. mktg team needs the final assets by the 15th. coffee machine is broken again.","agenda":{"title":"Project Odyssey: Q4 Kickoff & Strategy","goal":"Establish a clear roadmap and address key risks for the Project Odyssey launch.","topics":["Q3 Apollo Project: Post-Mortem & Key Learnings","Final Budget Allocation & Resource Planning","Odyssey Marketing & Content Strategy","New Hire Integration Timeline"],"question":"What is the primary blocker for a successful Q4 launch, and how do we mitigate it?"}},{"notes":"Follow up from the call with Mark at Innovate Inc. He seemed to like the design mockups which is good. He said the pricing was 'a bit higher than expected' - maybe we can offer a payment plan or a reduced scope for phase 1? also, timeline is critical for them, they really want it before the holidays. He asked 'can we integrate our old blog posts?' - need to check with dev team on this, could be tricky. I need to send them the revised contract by EOD friday.","agenda":{"title":"Follow-up: Innovate Inc. Website Proposal","goal":"Address client feedback and finalize the project proposal for immediate kickoff.","topics":["Pricing & Payment Plan Options","Timeline Confirmation for Holiday Launch","Technical Requirement: Blog Integration","Next Steps & Contract Revision"],"question":"What adjustments are needed to get full project sign-off this week?"}}];
+        const demoNotes = [
+            "ok so for the odyssey kickoff we NEED to talk about the budget, it's tight. maybe shift from paid social ads to more content marketing? jenna is handling the new hires, need to sync with her on their start dates. also the launch for the apollo project in q3 was a disaster, we have to do a full post-mortem on what went wrong before we even think about a new launch. mktg team needs the final assets by the 15th. coffee machine is broken again.",
+            "Follow up from the call with Mark at Innovate Inc. He seemed to like the design mockups which is good. He said the pricing was 'a bit higher than expected' - maybe we can offer a payment plan or a reduced scope for phase 1? also, timeline is critical for them, they really want it before the holidays. He asked 'can we integrate our old blog posts?' - need to check with dev team on this, could be tricky. I need to send them the revised contract by EOD friday."
+        ];
         const testimonialsData = [{"quote":"This has saved me hours each week. I can go from a messy brain-dump to a client-ready agenda in seconds. A total game-changer.","author":"Sarah J.","title":"Project Manager, TechCorp"},{"quote":"I was skeptical at first, but the quality of the agendas is shockingly good. It understands context and creates a perfect starting point for any meeting.","author":"Michael B.","title":"Startup Founder"},{"quote":"As a consultant, I'm in back-to-back meetings. AgendaAI Pro ensures every single one is productive and focused. I can't imagine my workflow without it.","author":"Dr. Emily C.","title":"Management Consultant"},{"quote":"The best $19 I've spent on productivity software. It's simple, fast, and does exactly what it promises. Highly recommended.","author":"David L.","title":"Freelance Developer"},{"quote":"We implemented this for our whole team. Our meetings are shorter, more focused, and we actually accomplish what we set out to do.","author":"Jessica R.","title":"Head of Operations"}];
+        
         const getAccessBtn = document.getElementById('getAccessBtn');
         const pricingCtaBtn = document.getElementById('pricingCtaBtn');
         const reloadDemoBtn = document.getElementById('reloadDemoBtn');
         const notesContainer = document.getElementById('demo-notes-container');
         const generateBtn = document.getElementById('demo-generate-btn');
         const agendaContainer = document.getElementById('demo-agenda-container');
-        const agendaItems = { title: document.getElementById('demo-agenda-title'), goal: document.getElementById('demo-agenda-goal'), topics: document.getElementById('demo-agenda-topics'), question: document.getElementById('demo-agenda-question'),};
+        const agendaItems = { title: document.getElementById('demo-agenda-title'), goal: document.getElementById('demo-agenda-goal'), topics: document.getElementById('demo-agenda-topics'), question: document.getElementById('demo-agenda-question')};
         const testimonialContents = document.querySelectorAll('.testimonial-content');
 
-        // --- ANIMATION FUNCTIONS (Unchanged) ---
         let currentDemoIndex = 0;
-        let isAnimating = false;
-        let lastTestimonialIndices = [-1, -1];
+        let isGenerating = false;
         let testimonialInterval;
-        const delay = ms => new Promise(res => setTimeout(res, ms));
-        async function typeWriter(element, text, speed = 25) { element.innerHTML = ""; for (let i = 0; i < text.length; i++) { element.innerHTML += text.charAt(i); await delay(speed); } }
-        function createCopyButton(textToCopy) { const button = document.createElement('button'); button.className = 'copy-btn'; button.innerHTML = '<i class="fa-solid fa-copy"></i>'; button.onclick = (e) => { e.stopPropagation(); navigator.clipboard.writeText(textToCopy); button.innerHTML = '<i class="fa-solid fa-check"></i> Copied!'; button.classList.add('copied'); setTimeout(() => { button.innerHTML = '<i class="fa-solid fa-copy"></i>'; button.classList.remove('copied'); }, 2000); }; return button; }
-        async function updateTestimonials() { testimonialContents.forEach(content => content.classList.add('is-updating')); await delay(300); let index1, index2; do { index1 = Math.floor(Math.random() * testimonialsData.length); } while (lastTestimonialIndices.includes(index1)); do { index2 = Math.floor(Math.random() * testimonialsData.length); } while (index1 === index2 || lastTestimonialIndices.includes(index2)); lastTestimonialIndices = [index1, index2]; const reviews = [testimonialsData[index1], testimonialsData[index2]]; testimonialContents.forEach((content, i) => { content.querySelector('p:first-of-type').textContent = \`"\${reviews[i].quote}"\`; content.querySelector('.testimonial-author').innerHTML = \`\${reviews[i].author} - <span>\${reviews[i].title}</span>\`; }); testimonialContents.forEach(content => content.classList.remove('is-updating')); }
-        async function runDemo() { if (isAnimating) return; isAnimating = true; reloadDemoBtn.disabled = true; agendaContainer.classList.remove('visible'); Object.values(agendaItems).forEach(item => { item.classList.remove('is-visible'); item.innerHTML = ""; }); const demo = demoData[currentDemoIndex]; await typeWriter(notesContainer, demo.notes); generateBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating...'; generateBtn.classList.add('loading'); await delay(1500); agendaContainer.classList.add('visible'); const titleText = demo.agenda.title; agendaItems.title.innerHTML = \`<strong>\${titleText}</strong>\`; agendaItems.title.appendChild(createCopyButton(titleText)); agendaItems.title.classList.add('is-visible'); await delay(300); const goalText = \`Goal: \${demo.agenda.goal}\`; agendaItems.goal.innerHTML = \`<i class="fa-solid fa-bullseye"></i><strong>\${goalText}</strong>\`; agendaItems.goal.appendChild(createCopyButton(goalText)); agendaItems.goal.classList.add('is-visible'); await delay(300); const topicsText = demo.agenda.topics.join('\\n'); const topicList = document.createElement('ul'); demo.agenda.topics.forEach(topic => { const li = document.createElement('li'); li.textContent = \`• \${topic}\`; topicList.appendChild(li); }); agendaItems.topics.innerHTML = \`<i class="fa-solid fa-list-check"></i><strong>Discussion Topics:</strong>\`; agendaItems.topics.appendChild(topicList); agendaItems.topics.appendChild(createCopyButton(topicsText)); agendaItems.topics.classList.add('is-visible'); await delay(300); const questionText = \`Key Question: \${demo.agenda.question}\`; agendaItems.question.innerHTML = \`<i class="fa-solid fa-circle-question"></i><strong>\${questionText}</strong>\`; agendaItems.question.appendChild(createCopyButton(questionText)); agendaItems.question.classList.add('is-visible'); generateBtn.innerHTML = 'Generate Agenda'; generateBtn.classList.remove('loading'); reloadDemoBtn.disabled = false; isAnimating = false; }
-        function startTestimonialCycle() { clearInterval(testimonialInterval); updateTestimonials(); testimonialInterval = setInterval(updateTestimonials, 7000); }
+        let lastTestimonialIndices = [-1, -1];
         
-        // --- PAYMENT & INITIALIZATION LOGIC ---
-        let stripe;
+        const delay = ms => new Promise(res => setTimeout(res, ms));
 
-        // Fetch the config and initialize Stripe
+        function createCopyButton(textToCopy) {
+            const button = document.createElement('button');
+            button.className = 'copy-btn';
+            button.innerHTML = '<i class="fa-solid fa-copy"></i>';
+            button.onclick = (e) => {
+                e.stopPropagation();
+                navigator.clipboard.writeText(textToCopy);
+                button.innerHTML = '<i class="fa-solid fa-check"></i> Copied!';
+                button.classList.add('copied');
+                setTimeout(() => {
+                    button.innerHTML = '<i class="fa-solid fa-copy"></i>';
+                    button.classList.remove('copied');
+                }, 2000);
+            };
+            return button;
+        }
+        
+        async function displayGeneratedAgenda(agendaData) {
+            agendaContainer.classList.add('visible');
+            const itemOrder = ['title', 'goal', 'topics', 'question'];
+            
+            for(const key of itemOrder) {
+                const itemEl = agendaItems[key];
+                if (agendaData[key] && itemEl) {
+                    itemEl.innerHTML = ''; 
+                    let contentHTML = '';
+                    let copyText = '';
+
+                    if (key === 'title') {
+                        contentHTML = \`<strong>\${agendaData.title}</strong>\`;
+                        copyText = agendaData.title;
+                    } else if (key === 'goal') {
+                        contentHTML = \`<i class="fa-solid fa-bullseye"></i><strong>Goal: \${agendaData.goal}</strong>\`;
+                        copyText = \`Goal: \${agendaData.goal}\`;
+                    } else if (key === 'topics') {
+                        const topicList = agendaData.topics.map(t => \`<li>• \${t}</li>\`).join('');
+                        contentHTML = \`<i class="fa-solid fa-list-check"></i><strong>Discussion Topics:</strong><ul>\${topicList}</ul>\`;
+                        copyText = agendaData.topics.join('\\n');
+                    } else if (key === 'question') {
+                        contentHTML = \`<i class="fa-solid fa-circle-question"></i><strong>Key Question: \${agendaData.question}</strong>\`;
+                        copyText = \`Key Question: \${agendaData.question}\`;
+                    }
+                    
+                    itemEl.innerHTML = contentHTML;
+                    itemEl.appendChild(createCopyButton(copyText));
+                    itemEl.classList.add('is-visible');
+                    await delay(200);
+                }
+            }
+        }
+
+        function resetDemo() {
+            isGenerating = false;
+            reloadDemoBtn.disabled = false;
+            generateBtn.disabled = false;
+            generateBtn.innerHTML = 'Generate Agenda';
+            agendaContainer.classList.remove('visible');
+            Object.values(agendaItems).forEach(item => { item.classList.remove('is-visible'); item.innerHTML = ""; });
+            notesContainer.textContent = demoNotes[currentDemoIndex];
+        }
+
+        async function updateTestimonials() {
+            testimonialContents.forEach(content => content.classList.add('is-updating'));
+            await delay(300);
+            let index1, index2;
+            do { index1 = Math.floor(Math.random() * testimonialsData.length); } while (lastTestimonialIndices.includes(index1));
+            do { index2 = Math.floor(Math.random() * testimonialsData.length); } while (index1 === index2 || lastTestimonialIndices.includes(index2));
+            lastTestimonialIndices = [index1, index2];
+            const reviews = [testimonialsData[index1], testimonialsData[index2]];
+            testimonialContents.forEach((content, i) => {
+                content.querySelector('p:first-of-type').textContent = \`"\${reviews[i].quote}"\`;
+                content.querySelector('.testimonial-author').innerHTML = \`\${reviews[i].author} - <span>\${reviews[i].title}</span>\`;
+            });
+            testimonialContents.forEach(content => content.classList.remove('is-updating'));
+        }
+
+        function startTestimonialCycle() {
+            clearInterval(testimonialInterval);
+            updateTestimonials();
+            testimonialInterval = setInterval(updateTestimonials, 7000);
+        }
+
+        generateBtn.addEventListener('click', async () => {
+            if (isGenerating) return;
+            const userNotes = notesContainer.textContent.trim();
+            if (userNotes.length < 20) {
+                alert("Please enter more detailed notes to generate an agenda.");
+                return;
+            }
+
+            isGenerating = true;
+            generateBtn.disabled = true;
+            reloadDemoBtn.disabled = true;
+            generateBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating...';
+
+            try {
+                const response = await fetch('/generate-agenda', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notes: userNotes })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to get a response from the server.');
+                }
+                const realAgenda = await response.json();
+                await displayGeneratedAgenda(realAgenda);
+
+            } catch (error) {
+                console.error("Error generating agenda:", error);
+                alert("Sorry, an error occurred while generating the agenda. Please try again.");
+            } finally {
+                isGenerating = false;
+                generateBtn.disabled = false;
+                reloadDemoBtn.disabled = false;
+                generateBtn.innerHTML = 'Generate Agenda';
+            }
+        });
+
+        reloadDemoBtn.addEventListener('click', () => {
+            currentDemoIndex = (currentDemoIndex + 1) % demoNotes.length;
+            resetDemo();
+        });
+
+        let stripe;
         try {
             const response = await fetch('/config');
             const config = await response.json();
@@ -216,7 +337,7 @@ const indexHtml = `
             console.error("Could not fetch config from server.", e);
             alert("Error: Could not initialize payment system.");
         }
-
+        
         const handleCheckout = async () => {
             if (!stripe) {
                 alert("Payment system is not ready. Please refresh the page.");
@@ -231,7 +352,9 @@ const indexHtml = `
                 const session = await response.json();
                 if (response.ok) {
                     const result = await stripe.redirectToCheckout({ sessionId: session.id });
-                    if (result.error) { alert(result.error.message); }
+                    if (result.error) {
+                        alert(result.error.message);
+                    }
                 } else {
                     alert(session.error || 'Could not connect to payment gateway.');
                 }
@@ -247,14 +370,8 @@ const indexHtml = `
         
         getAccessBtn.addEventListener('click', handleCheckout);
         pricingCtaBtn.addEventListener('click', handleCheckout);
-        reloadDemoBtn.addEventListener('click', () => {
-            currentDemoIndex = (currentDemoIndex + 1) % demoData.length;
-            runDemo();
-            startTestimonialCycle();
-        });
-
-        // --- INITIALIZE THE PAGE ---
-        runDemo();
+        
+        resetDemo();
         startTestimonialCycle();
     });
     </script>
@@ -271,11 +388,32 @@ app.get('/', (req, res) => res.send(indexHtml));
 app.get('/success.html', (req, res) => res.send(successHtml));
 app.get('/cancel.html', (req, res) => res.send(cancelHtml));
 
-// NEW: A route to provide the publishable key to the frontend
+// A route to provide the publishable key to the frontend
 app.get('/config', (req, res) => {
-    res.json({
-        publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
-    });
+    res.json({ publishableKey: process.env.STRIPE_PUBLISHABLE_KEY });
+});
+
+// A route to handle real AI agenda generation
+app.post('/generate-agenda', async (req, res) => {
+    const { notes } = req.body;
+    if (!notes) {
+        return res.status(400).json({ error: 'Notes are required.' });
+    }
+
+    try {
+        const completion = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+                { role: "system", content: "You are an expert meeting assistant. Analyze the user's raw notes and transform them into a professional, structured meeting agenda. You must respond with only a valid JSON object with the following keys: title, goal, topics (an array of strings), and question." },
+                { role: "user", content: notes }
+            ],
+            response_format: { "type": "json_object" },
+        });
+        res.json(JSON.parse(completion.choices[0].message.content));
+    } catch (error) {
+        console.error("OpenAI Error:", error);
+        res.status(500).json({ error: 'Failed to generate agenda.' });
+    }
 });
 
 // The secure backend endpoint for creating the Stripe Checkout Session
@@ -283,17 +421,11 @@ app.post('/create-checkout-session', async (req, res) => {
     try {
         const session = await stripe.checkout.sessions.create({
             payment_method_types: ['card'],
-            line_items: [{
-                price_data: {
-                    currency: 'usd',
-                    product_data: { name: 'AgendaAI Pro - Lifetime Access' },
-                    unit_amount: 1900,
-                },
-                quantity: 1,
-            }],
+            line_items: [{ price_data: { currency: 'usd', product_data: { name: 'AgendaAI Pro - Lifetime Access' }, unit_amount: 1900, }, quantity: 1, }],
             mode: 'payment',
-            success_url: `http://localhost:4242/success.html`,
-            cancel_url: `http://localhost:4242/cancel.html`,
+            // THIS IS THE FINAL, CRITICAL CHANGE
+            success_url: `https://agenda-ai-app.onrender.com/success.html`,
+            cancel_url: `https://agenda-ai-app.onrender.com/cancel.html`,
         });
         res.json({ id: session.id });
     } catch (error) {
